@@ -40,6 +40,7 @@ CENSUS_CONFIG = {
 QC_PARAMS = {
     "min_genes": 200,  # Minimum genes per cell
     "min_cells": 3,    # Minimum cells per gene
+    "max_cells": None,  # Maximum cells to query (None = all, set to e.g. 50000 for testing)
 }
 
 # Gene filtering parameters

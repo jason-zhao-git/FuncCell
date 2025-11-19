@@ -72,14 +72,16 @@ def query_census_data(
         for key, value in filters.items():
             if isinstance(value, list):
                 # Handle list values (e.g., disease in ['breast cancer', 'cancer'])
-                value_str = ", ".join([f"'{v}'" for v in value])
-                filter_parts.append(f"{key} in [{value_str}]")
+                # Use triple quotes to handle apostrophes in values safely
+                value_str = ", ".join([f'"{v}"' for v in value])
+                filter_parts.append(f'''{key} in [{value_str}]''')
             elif isinstance(value, bool):
                 # Handle boolean values (e.g., is_primary_data == True)
-                filter_parts.append(f"{key} == {value}")
+                filter_parts.append(f'''{key} == {value}''')
             else:
-                # Handle single string values
-                filter_parts.append(f"{key} == '{value}'")
+                # Handle single string values - use triple quotes + double quotes
+                # This safely handles apostrophes in values like "10x 3' v3"
+                filter_parts.append(f'''{key} == "{value}"''')
 
         # Combine all filters
         obs_value_filter = " and ".join(filter_parts)
