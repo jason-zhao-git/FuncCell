@@ -29,63 +29,91 @@ def select_hvgs(
         Tuple of (filtered_healthy_adata, filtered_tumor_adata, hvg_list)
     """
     logger.info("="*60)
-    logger.info("Selecting Highly Variable Genes (HVGs)")
+    logger.info("Gene Selection Strategy")
     logger.info("="*60)
 
     # Add labels to track cell origin
     healthy_adata.obs['cell_type'] = 'healthy'
     tumor_adata.obs['cell_type'] = 'tumor'
 
-    # Concatenate datasets
-    logger.info("Concatenating healthy and tumor datasets...")
-    logger.info(f"  Healthy: {healthy_adata.n_obs:,} cells")
-    logger.info(f"  Tumor:   {tumor_adata.n_obs:,} cells")
+    # Check if we should skip HVG selection
+    if config.HVG_PARAMS["skip_hvg_selection"]:
+        logger.info("Skipping HVG selection - using all protein-coding genes")
+        logger.info(f"  Healthy: {healthy_adata.n_obs:,} cells × {healthy_adata.n_vars:,} genes")
+        logger.info(f"  Tumor:   {tumor_adata.n_obs:,} cells × {tumor_adata.n_vars:,} genes")
 
-    combined_adata = healthy_adata.concatenate(
-        tumor_adata,
-        batch_key='dataset',
-        batch_categories=['healthy', 'tumor'],
-        index_unique=None,
-    )
+        # Get common genes between datasets
+        common_genes = healthy_adata.var_names.intersection(tumor_adata.var_names)
+        logger.info(f"  Common genes: {len(common_genes):,}")
 
-    logger.info(f"  Combined: {combined_adata.n_obs:,} cells × {combined_adata.n_vars:,} genes")
+        # Normalize both datasets
+        logger.info("Normalizing datasets...")
+        sc.pp.normalize_total(healthy_adata, target_sum=config.NORM_PARAMS["target_sum"])
+        sc.pp.log1p(healthy_adata)
+        sc.pp.normalize_total(tumor_adata, target_sum=config.NORM_PARAMS["target_sum"])
+        sc.pp.log1p(tumor_adata)
 
-    # Normalize and log-transform
-    logger.info("Normalizing combined dataset...")
-    sc.pp.normalize_total(combined_adata, target_sum=config.NORM_PARAMS["target_sum"])
-    sc.pp.log1p(combined_adata)
+        # Filter to common genes
+        healthy_filtered = healthy_adata[:, common_genes].copy()
+        tumor_filtered = tumor_adata[:, common_genes].copy()
+        gene_list = common_genes.tolist()
 
-    # Calculate highly variable genes on combined data
-    logger.info(f"Calculating top {config.HVG_PARAMS['n_top_genes']} HVGs...")
-    sc.pp.highly_variable_genes(
-        combined_adata,
-        n_top_genes=config.HVG_PARAMS["n_top_genes"],
-        flavor=config.HVG_PARAMS["flavor"],
-        batch_key=config.HVG_PARAMS["batch_key"],
-    )
+        logger.info(f"\nUsing all {len(gene_list):,} protein-coding genes")
 
-    # Get HVG list
-    hvg_genes = combined_adata.var_names[combined_adata.var['highly_variable']].tolist()
-    n_hvgs = len(hvg_genes)
+    else:
+        logger.info("Selecting Highly Variable Genes (HVGs)")
 
-    logger.info(f"Selected {n_hvgs} highly variable genes")
-    logger.info(f"  Mean variance ratio: {combined_adata.var.loc[hvg_genes, 'variances_norm'].mean():.3f}")
+        # Concatenate datasets
+        logger.info("Concatenating healthy and tumor datasets...")
+        logger.info(f"  Healthy: {healthy_adata.n_obs:,} cells")
+        logger.info(f"  Tumor:   {tumor_adata.n_obs:,} cells")
 
-    # Filter original datasets to HVGs
-    logger.info("\nFiltering datasets to HVG set...")
+        combined_adata = healthy_adata.concatenate(
+            tumor_adata,
+            batch_key='dataset',
+            batch_categories=['healthy', 'tumor'],
+            index_unique=None,
+        )
 
-    # Normalize and log-transform original datasets
-    sc.pp.normalize_total(healthy_adata, target_sum=config.NORM_PARAMS["target_sum"])
-    sc.pp.log1p(healthy_adata)
-    sc.pp.normalize_total(tumor_adata, target_sum=config.NORM_PARAMS["target_sum"])
-    sc.pp.log1p(tumor_adata)
+        logger.info(f"  Combined: {combined_adata.n_obs:,} cells × {combined_adata.n_vars:,} genes")
 
-    # Filter to HVGs
-    healthy_filtered = healthy_adata[:, hvg_genes].copy()
-    tumor_filtered = tumor_adata[:, hvg_genes].copy()
+        # Normalize and log-transform
+        logger.info("Normalizing combined dataset...")
+        sc.pp.normalize_total(combined_adata, target_sum=config.NORM_PARAMS["target_sum"])
+        sc.pp.log1p(combined_adata)
 
-    logger.info(f"  Healthy filtered: {healthy_filtered.n_obs:,} cells × {healthy_filtered.n_vars:,} genes")
-    logger.info(f"  Tumor filtered:   {tumor_filtered.n_obs:,} cells × {tumor_filtered.n_vars:,} genes")
+        # Calculate highly variable genes on combined data
+        logger.info(f"Calculating top {config.HVG_PARAMS['n_top_genes']} HVGs...")
+        sc.pp.highly_variable_genes(
+            combined_adata,
+            n_top_genes=config.HVG_PARAMS["n_top_genes"],
+            flavor=config.HVG_PARAMS["flavor"],
+            batch_key=config.HVG_PARAMS["batch_key"],
+        )
+
+        # Get HVG list
+        hvg_genes = combined_adata.var_names[combined_adata.var['highly_variable']].tolist()
+        n_hvgs = len(hvg_genes)
+
+        logger.info(f"Selected {n_hvgs} highly variable genes")
+        logger.info(f"  Mean variance ratio: {combined_adata.var.loc[hvg_genes, 'variances_norm'].mean():.3f}")
+
+        # Filter original datasets to HVGs
+        logger.info("\nFiltering datasets to HVG set...")
+
+        # Normalize and log-transform original datasets
+        sc.pp.normalize_total(healthy_adata, target_sum=config.NORM_PARAMS["target_sum"])
+        sc.pp.log1p(healthy_adata)
+        sc.pp.normalize_total(tumor_adata, target_sum=config.NORM_PARAMS["target_sum"])
+        sc.pp.log1p(tumor_adata)
+
+        # Filter to HVGs
+        healthy_filtered = healthy_adata[:, hvg_genes].copy()
+        tumor_filtered = tumor_adata[:, hvg_genes].copy()
+        gene_list = hvg_genes
+
+        logger.info(f"  Healthy filtered: {healthy_filtered.n_obs:,} cells × {healthy_filtered.n_vars:,} genes")
+        logger.info(f"  Tumor filtered:   {tumor_filtered.n_obs:,} cells × {tumor_filtered.n_vars:,} genes")
 
     # Save filtered datasets
     logger.info("\nSaving filtered datasets...")
@@ -97,13 +125,13 @@ def select_hvgs(
 
     # Save gene list
     with open(config.OUTPUT_FILES["gene_list"], 'w') as f:
-        for gene in hvg_genes:
+        for gene in gene_list:
             f.write(f"{gene}\n")
     logger.info(f"  Saved gene list: {config.OUTPUT_FILES['gene_list']}")
 
-    logger.info("\nHVG selection completed successfully!")
+    logger.info("\nGene selection completed successfully!")
 
-    return healthy_filtered, tumor_filtered, hvg_genes
+    return healthy_filtered, tumor_filtered, gene_list
 
 
 def load_filtered_datasets() -> tuple[AnnData, AnnData, list]:

@@ -44,14 +44,17 @@ QC_PARAMS = {
 
 # Gene filtering parameters
 GENE_FILTER_PARAMS = {
-    "feature_biotype": "protein_coding",  # Only protein-coding genes
+    # BioMart export with protein-coding gene annotations
+    "biomart_file": DATA_DIR / "raw" / "mart_export.txt",
+    "use_protein_coding_only": True,  # Filter to protein-coding genes after query
 }
 
 # HVG selection parameters
 HVG_PARAMS = {
-    "n_top_genes": 2000,          # Number of highly variable genes
-    "flavor": "seurat_v3",        # HVG selection method
-    "batch_key": None,            # No batch correction for now
+    "skip_hvg_selection": True,    # OPTION A: Skip HVG, use all protein-coding genes
+    "n_top_genes": 2000,           # Number of highly variable genes (if not skipped)
+    "flavor": "seurat_v3",         # HVG selection method
+    "batch_key": None,             # No batch correction for now
 }
 
 # Normalization parameters

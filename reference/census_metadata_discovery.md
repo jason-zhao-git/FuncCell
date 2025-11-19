@@ -107,11 +107,16 @@ With these filters applied:
 - ✅ **Technical consistency:** Single assay type (10x 3' v3)
 - ✅ **No duplicates:** Primary data only
 
+## Important: Census Schema Limitation
+
+**Census does NOT have `feature_biotype` in var metadata!**
+- Census only includes features with `feature_biotype='gene'`
+- Cannot filter for protein-coding genes directly in Census query
+- **Solution:** Use BioMart annotations (`data/raw/mart_export.txt`) to filter after querying
+
 ## Discovery Script
 
-Location: `scripts/discover_metadata.py`
-
-Run to rediscover or validate:
+Run to rediscover metadata values:
 ```bash
 uv run python scripts/discover_metadata.py
 ```

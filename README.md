@@ -145,8 +145,8 @@ gene_to_sequence, stats = map_genes_to_proteins(hvg_list)
 ### Data Pipeline (Day 1)
 
 - ✅ Automated querying from CELLxGENE Census
-- ✅ Protein-coding gene filtering
-- ✅ Combined HVG selection (captures cancer-specific signals)
+- ✅ Protein-coding gene filtering using BioMart annotations (21,490 genes)
+- ✅ **Option A Active:** Skip HVG selection, use all protein-coding genes (~15k-18k)
 - ✅ Robust gene-to-protein mapping with retry logic
 - ✅ Comprehensive logging and error handling
 - ✅ Detailed statistics and QC reports
@@ -173,12 +173,12 @@ gene_to_sequence, stats = map_genes_to_proteins(hvg_list)
    - Ensures original count matrices
 
 **Gene Selection Pipeline:**
-1. Filter both datasets to protein-coding genes first (~20,000 genes)
-2. Combine healthy + tumor datasets
-3. Calculate HVGs on **combined data** (n_top_genes=2000)
-   - Ensures capture of cancer-specific signals
-   - Avoids bias from separate HVG selection
-4. Final output: ~1,800-2,000 protein-coding HVGs with sequences
+1. Query Census without `var_value_filter` (Census lacks `feature_biotype`)
+2. Filter to protein-coding genes using BioMart (`data/raw/mart_export.txt`)
+3. **Option A (Active):** Use all ~15k-18k protein-coding genes detected
+4. **Option B (Disabled):** Calculate top 2,000 HVGs on combined data
+   - Set `skip_hvg_selection: False` in config to enable
+5. Final output: ~13k-16k genes with protein sequences
 
 ### Protein Function Integration
 
