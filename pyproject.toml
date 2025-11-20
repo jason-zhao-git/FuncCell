@@ -8,19 +8,27 @@ authors = [
     {name = "Jason Zhao"}
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "cellxgene-census>=1.10.0",
     "scanpy>=1.9.0",
     "anndata>=0.10.0",
     "pandas>=2.0.0",
-    "numpy>=1.24.0",
+    "numpy>=1.24.0,<1.25",  # Numpy 1.24.x for compatibility with ProteinBERT's tokenization
     "biopython>=1.81",
     "mygene>=3.2.2",
     "tqdm>=4.65.0",
     "matplotlib>=3.7.0",
     "seaborn>=0.12.0",
     "requests>=2.31.0",
+    # ProteinBERT and dependencies (requires Python <3.12 due to tensorflow-addons)
+    # Use TensorFlow 2.15.x for Keras 2.x compatibility with ProteinBERT
+    "tensorflow>=2.15.0,<2.16",
+    "tensorflow-addons>=0.12.1",
+    "h5py>=3.2.1",
+    "lxml>=4.3.2",
+    "pyfaidx>=0.5.8",
+    "protein-bert>=1.0.0",
 ]
 
 [project.optional-dependencies]
