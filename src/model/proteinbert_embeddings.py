@@ -98,7 +98,12 @@ class ProteinBERTEmbedder:
 
         encoded_x = self.input_encoder.encode_X([sequence], self.seq_len)
         _, global_rep = self.model.predict(encoded_x, batch_size=1, verbose=0)
-        return global_rep[0]
+        # global_rep shape: (1, 1024) -> extract to (1024,)
+        embedding = global_rep[0]
+        # Ensure it's 1D and has correct shape
+        if embedding.ndim > 1:
+            embedding = embedding.flatten()
+        return embedding
 
 
     def embed_batch(self, sequences: list, batch_size: int = 32) -> np.ndarray:
