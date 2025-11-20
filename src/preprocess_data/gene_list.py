@@ -8,12 +8,14 @@ from . import config
 logger = logging.getLogger(__name__)
 
 
-def get_protein_coding_genes() -> list:
+def get_protein_coding_genes() -> tuple[list, dict]:
     """
     Load all protein-coding gene symbols from BioMart export.
 
     Returns:
-        List of gene symbols for all protein-coding genes
+        Tuple of (gene_symbols, gene_descriptions)
+        - gene_symbols: List of gene symbols for all protein-coding genes
+        - gene_descriptions: Dict mapping gene symbol to gene description
     """
     biomart_file = config.GENE_FILTER_PARAMS["biomart_file"]
 
@@ -34,6 +36,15 @@ def get_protein_coding_genes() -> list:
     # Extract gene symbols (gene names)
     gene_symbols = protein_coding['Gene name'].dropna().unique().tolist()
 
-    logger.info(f"Loaded {len(gene_symbols):,} protein-coding gene symbols from BioMart")
+    # Create mapping of gene symbols to descriptions
+    gene_descriptions = {}
+    for _, row in protein_coding.iterrows():
+        gene_name = row['Gene name']
+        gene_desc = row['Gene description']
+        if pd.notna(gene_name) and pd.notna(gene_desc):
+            gene_descriptions[gene_name] = gene_desc
 
-    return gene_symbols
+    logger.info(f"Loaded {len(gene_symbols):,} protein-coding gene symbols from BioMart")
+    logger.info(f"  - {len(gene_descriptions):,} genes have descriptions")
+
+    return gene_symbols, gene_descriptions

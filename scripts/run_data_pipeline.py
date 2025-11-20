@@ -60,7 +60,7 @@ def run_pipeline():
         logger.info("STEP 1/2: Loading Protein-Coding Genes from BioMart")
         logger.info("█" * 80 + "\n")
 
-        gene_list = get_protein_coding_genes()
+        gene_list, gene_descriptions = get_protein_coding_genes()
 
         stats['n_genes_total'] = len(gene_list)
 
@@ -82,7 +82,7 @@ def run_pipeline():
         logger.info("STEP 2/2: Mapping Genes to Protein Sequences")
         logger.info("█" * 80 + "\n")
 
-        gene_to_sequence, mapping_stats = map_genes_to_proteins(gene_list)
+        gene_to_sequence, mapping_stats = map_genes_to_proteins(gene_list, gene_descriptions)
 
         stats['n_genes_mapped'] = mapping_stats['n_mapped']
         stats['mapping_success_rate'] = mapping_stats['success_rate']

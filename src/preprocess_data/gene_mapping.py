@@ -150,12 +150,16 @@ def fetch_uniprot_sequences(
     return uniprot_to_seq
 
 
-def map_genes_to_proteins(gene_list: List[str]) -> Tuple[Dict[str, str], Dict[str, str]]:
+def map_genes_to_proteins(
+    gene_list: List[str],
+    gene_descriptions: Dict[str, str] = None
+) -> Tuple[Dict[str, str], Dict[str, str]]:
     """
     Map gene symbols to protein sequences.
 
     Args:
         gene_list: List of gene symbols
+        gene_descriptions: Dict mapping gene symbol to gene description (for readthrough detection)
 
     Returns:
         Tuple of (gene_to_sequence dict, mapping_stats dict)
@@ -184,6 +188,71 @@ def map_genes_to_proteins(gene_list: List[str]) -> Tuple[Dict[str, str], Dict[st
         if uniprot_id in uniprot_to_seq:
             gene_to_sequence[gene] = uniprot_to_seq[uniprot_id]
 
+    # Step 4: Handle readthrough transcripts (fusion genes)
+    # These are cancer-relevant biomarkers that need special handling
+    # Use BioMart Gene Description field to identify readthrough transcripts
+    missing_genes = [g for g in gene_list if g not in gene_to_sequence]
+
+    # Identify readthrough genes using BioMart descriptions
+    if gene_descriptions:
+        readthrough_genes = [
+            g for g in missing_genes
+            if g in gene_descriptions and 'readthrough' in gene_descriptions[g].lower()
+        ]
+    else:
+        # Fallback to simple hyphen detection (not ideal but better than nothing)
+        logger.warning("No gene descriptions provided - using fallback hyphen detection for readthrough genes")
+        readthrough_genes = [g for g in missing_genes if '-' in g and not g.startswith('HLA-')]
+
+    if readthrough_genes:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Handling readthrough transcripts (potential cancer biomarkers)")
+        logger.info(f"{'='*60}")
+        logger.info(f"Found {len(readthrough_genes)} readthrough genes")
+        logger.info(f"Mapping component genes separately...")
+
+        # Extract component genes
+        component_genes = set()
+        for rt_gene in readthrough_genes:
+            components = rt_gene.split('-')
+            component_genes.update(components)
+
+        # Map component genes
+        logger.info(f"  Extracting {len(component_genes)} unique component genes")
+        component_to_uniprot = query_mygene(
+            list(component_genes),
+            batch_size=config.GENE_MAPPING_PARAMS["batch_size"]
+        )
+
+        # Fetch sequences for component genes
+        component_uniprot_ids = list(component_to_uniprot.values())
+        component_uniprot_to_seq = fetch_uniprot_sequences(
+            component_uniprot_ids,
+            batch_size=config.GENE_MAPPING_PARAMS["batch_size"],
+            max_retries=config.GENE_MAPPING_PARAMS["max_retries"],
+        )
+
+        # Map component genes to sequences
+        component_to_seq = {}
+        for gene, uniprot_id in component_to_uniprot.items():
+            if uniprot_id in component_uniprot_to_seq:
+                component_to_seq[gene] = component_uniprot_to_seq[uniprot_id]
+
+        # Create readthrough entries using component genes
+        readthrough_mapped = 0
+        for rt_gene in readthrough_genes:
+            components = rt_gene.split('-')
+            # Get sequences for all components that were found
+            component_seqs = [component_to_seq.get(c) for c in components if c in component_to_seq]
+
+            if component_seqs:
+                # Store as tuple of component sequences
+                # Later can use max/mean of embeddings or concatenate
+                gene_to_sequence[rt_gene] = tuple(component_seqs)
+                readthrough_mapped += 1
+
+        logger.info(f"  Mapped {readthrough_mapped}/{len(readthrough_genes)} readthrough genes via components")
+
     # Calculate statistics
     n_total = len(gene_list)
     n_mapped = len(gene_to_sequence)
@@ -201,7 +270,15 @@ def map_genes_to_proteins(gene_list: List[str]) -> Tuple[Dict[str, str], Dict[st
     missing_genes = [g for g in gene_list if g not in gene_to_sequence]
 
     # Calculate sequence length statistics
-    seq_lengths = [len(seq) for seq in gene_to_sequence.values()]
+    # Handle both regular sequences (str) and readthrough sequences (tuple)
+    seq_lengths = []
+    for seq in gene_to_sequence.values():
+        if isinstance(seq, tuple):
+            # For readthrough genes, use total length of all components
+            seq_lengths.append(sum(len(s) for s in seq))
+        else:
+            seq_lengths.append(len(seq))
+
     if seq_lengths:
         logger.info(f"\nProtein sequence statistics:")
         logger.info(f"  Mean length:   {sum(seq_lengths) / len(seq_lengths):.0f} aa")
@@ -217,6 +294,10 @@ def map_genes_to_proteins(gene_list: List[str]) -> Tuple[Dict[str, str], Dict[st
     mapped_genes = sorted(gene_to_sequence.keys())
     save_list(mapped_genes, config.OUTPUT_FILES["gene_list"])
 
+    # Count readthrough genes
+    n_readthrough = sum(1 for v in gene_to_sequence.values() if isinstance(v, tuple))
+    n_regular = n_mapped - n_readthrough
+
     # Generate mapping report
     report = f"""Gene-to-Protein Mapping Report
 {'='*60}
@@ -224,12 +305,18 @@ def map_genes_to_proteins(gene_list: List[str]) -> Tuple[Dict[str, str], Dict[st
 Summary:
   Total input genes:        {n_total:,}
   Successfully mapped:      {n_mapped:,} ({success_rate:.1f}%)
+    - Regular genes:        {n_regular:,}
+    - Readthrough genes:    {n_readthrough:,} (cancer biomarkers)
   Failed to map:            {n_total - n_mapped:,}
 
 Protein Sequence Statistics:
   Mean length:              {sum(seq_lengths) / len(seq_lengths):.0f} aa
   Median length:            {sorted(seq_lengths)[len(seq_lengths)//2]:.0f} aa
   Range:                    {min(seq_lengths)} - {max(seq_lengths)} aa
+
+Readthrough Transcripts (Fusion Genes):
+  These are potential cancer biomarkers stored as tuples of component
+  gene sequences. During embedding, use max/mean of component embeddings.
 
 Missing Genes ({len(missing_genes)}):
 {chr(10).join('  - ' + g for g in missing_genes[:50])}
@@ -257,12 +344,13 @@ Output Files:
 if __name__ == "__main__":
     from utils.logging_utils import setup_logger
     from utils.file_utils import load_list
+    from .gene_list import get_protein_coding_genes
 
     setup_logger("gene_mapping", level=logging.INFO)
 
-    # Load gene list from HVG selection
-    gene_list = load_list(config.OUTPUT_FILES["gene_list"])
-    logger.info(f"Loaded {len(gene_list)} genes from HVG selection")
+    # Load gene list and descriptions from BioMart
+    gene_list, gene_descriptions = get_protein_coding_genes()
+    logger.info(f"Loaded {len(gene_list)} genes from BioMart")
 
     # Map genes to proteins
-    map_genes_to_proteins(gene_list)
+    map_genes_to_proteins(gene_list, gene_descriptions)
