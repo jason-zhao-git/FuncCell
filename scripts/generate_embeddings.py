@@ -37,7 +37,7 @@ logger = setup_logger(
 
 @log_step(logger, "ProteinBERT Embedding Generation")
 def generate_embeddings(
-    seq_len: int = 1024,  # Sequences >1024 aa will be randomly subsampled
+    seq_len: int = 2048,  # Sequences >2048 aa will be randomly subsampled
     batch_size: int = 32,
     readthrough_strategy: str = 'concat'
 ):
@@ -52,7 +52,7 @@ def generate_embeddings(
     logger.info("\n")
     logger.info("╔" + "═" * 78 + "╗")
     logger.info("║" + " " * 20 + "funcCell Embedding Generation" + " " * 28 + "║")
-    logger.info("║" + " " * 18 + "ProteinBERT 1024-dim Embeddings" + " " * 28 + "║")
+    logger.info("║" + " " * 18 + "ProteinBERT 512-dim Embeddings" + " " * 29 + "║")
     logger.info("╚" + "═" * 78 + "╝")
     logger.info("\n")
 
@@ -213,7 +213,7 @@ NEXT STEPS
 if __name__ == "__main__":
     try:
         gene_to_embedding = generate_embeddings(
-            seq_len=1024,  # Sequences >1024 aa will be randomly subsampled
+            seq_len=2048,  # Sequences >2048 aa will be randomly subsampled
             batch_size=32,
             readthrough_strategy='concat'
         )

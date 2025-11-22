@@ -1,13 +1,57 @@
 # ProteinBERT Embedding Generation
 
-**Date:** 2025-11-20
+**Date:** 2025-11-21 (Updated)
 **Model:** ProteinBERT (pretrained on 106M proteins)
 **Total Proteins:** 19,294 (19,194 regular + 100 readthrough)
-**Embedding Dimension:** 1024
+**Embedding Dimension:** 512 (CORRECTED - was incorrectly 8943 or 15599)
 
 ## Summary
 
-ProteinBERT embeddings provide protein function representations for all mapped genes. Each protein sequence (variable length: 25-34,350 amino acids) is compressed into a fixed 1024-dimensional vector capturing functional properties learned from 106 million proteins.
+ProteinBERT embeddings provide protein function representations for all mapped genes. Each protein sequence (variable length: 25-34,350 amino acids) is compressed into a fixed **512-dimensional global representation** capturing functional properties learned from 106 million proteins.
+
+## IMPORTANT: Correct Embedding Extraction (Updated 2025-11-21)
+
+**Critical Discovery:** The ProteinBERT model outputs are NOT the protein embeddings. The model has multiple outputs:
+- `output-seq`: (batch, seq_len, 26) - per-amino-acid predictions
+- `output-annotations`: (batch, 8943) - GO term predictions (task-specific)
+
+**The true 512-dim global protein embedding** is hidden inside the model at layer `global-merge2-norm-block6`.
+
+### Incorrect Methods (DO NOT USE)
+```python
+# ❌ WRONG: Using GO predictions as embeddings
+outputs = model.predict(encoded_x)
+embedding = outputs[1]  # Shape: (1, 8943) - these are GO predictions, NOT embeddings!
+
+# ❌ WRONG: Using concatenated hidden layers
+from proteinbert.conv_and_global_attention_model import get_model_with_hidden_layers_as_outputs
+model = get_model_with_hidden_layers_as_outputs(base_model)
+local, global_concat = model.predict(encoded_x)
+embedding = global_concat[0]  # Shape: (15599,) - concatenated GO + hidden states, NOT embeddings!
+```
+
+### Correct Method (USE THIS)
+```python
+import tensorflow as tf
+from proteinbert import load_pretrained_model
+
+# Load model
+pretrained_model_generator, input_encoder = load_pretrained_model()
+base_model = pretrained_model_generator.create_model(seq_len=2048)
+
+# Extract the 512-dim global representation from internal layer
+final_global_layer = base_model.get_layer('global-merge2-norm-block6')
+
+# Create new model that outputs only the 512-dim embedding
+embedding_model = tf.keras.Model(
+    inputs=base_model.inputs,
+    outputs=final_global_layer.output
+)
+
+# Get embeddings
+encoded_x = input_encoder.encode_X([sequence], seq_len)
+embedding = embedding_model.predict(encoded_x)[0]  # Shape: (512,) ✓ CORRECT!
+```
 
 ## Model Architecture
 
@@ -19,39 +63,41 @@ ProteinBERT embeddings provide protein function representations for all mapped g
 - **Advantage:** Can handle extremely long sequences up to 34k amino acids
 
 ### Dual Representation System
-- **Local representations:** Per-amino acid embeddings (1024-dim × sequence_length)
-- **Global representations:** Whole-protein embeddings (1024-dim per protein) ← **We use these**
+- **Local representations:** Per-amino acid embeddings (128-dim × sequence_length)
+- **Global representations:** Whole-protein embeddings (512-dim per protein) ← **We use these**
+- **Model outputs:** Task-specific predictions (26-dim per amino acid, 8943-dim GO terms) ← **NOT embeddings!**
 
 ## Implementation Details
 
 ### Configuration
 ```python
-seq_len = 1024               # Maximum sequence length for encoding
+seq_len = 2048               # Maximum sequence length for encoding (UPDATED from 1024)
 batch_size = 32              # Sequences processed per batch
-readthrough_strategy = 'mean' # How to combine fusion gene components
+readthrough_strategy = 'concat'  # Concatenate sequences (biologically accurate)
 ```
 
 ### Sequence Length Handling
 - **Training lengths:** 128, 512, or 1024 tokens
-- **Our choice:** 1024 tokens
-  - Covers 95%+ of proteins (median=431aa, mean=579aa)
-  - Long sequences (>1024aa) are randomly subsampled
+- **Our choice:** 2048 tokens (UPDATED from 1024)
+  - Covers ~95% of proteins (median=431aa, mean=579aa)
+  - With 2048 buffer, even fewer proteins need truncation
+  - Long sequences (>2048aa) are randomly subsampled
   - Model's global attention captures full-protein context from substrings
 
-#### Truncation Strategy for Long Proteins (>1024aa)
+#### Truncation Strategy for Long Proteins (>2048aa)
 
 **Dataset Statistics:**
-- 2,260 proteins (11.7%) exceed 1024aa
+- With 2048aa buffer, fewer proteins need truncation compared to 1024aa
 - Longest: TTN (titin) at 34,350aa
 - Other examples: MUC16 (14,507aa), SYNE1 (8,797aa), NEB (8,525aa)
 
 **Chosen Approach: Single Random Substring**
 ```python
-# For sequences >1024aa, randomly select one 1024aa window
-if len(sequence) > 1024:
-    start = random.randint(0, len(sequence) - 1024)
-    sequence = sequence[start:start + 1024]
-# Embed once → one 1024-dim vector
+# For sequences >2048aa, randomly select one 2048aa window
+if len(sequence) > 2048:
+    start = random.randint(0, len(sequence) - 2048)
+    sequence = sequence[start:start + 2048]
+# Embed once → one 512-dim vector
 ```
 
 **Why Single Random Substring:**
@@ -78,24 +124,31 @@ final_embedding = np.mean(embeddings, axis=0)  # Aggregate
 **Problem:** 100 readthrough genes stored as tuples of component sequences
 **Examples:** `PDCD6-AHRR`, `NME1-NME2`, `BIVM-ERCC5`
 
-**Solution:** Mean pooling of component embeddings
+**Solution:** Concatenate sequences then embed (UPDATED from mean pooling)
 ```python
 # For readthrough gene with components (seq1, seq2)
-embedding1 = embed_protein(seq1)  # 1024-dim
-embedding2 = embed_protein(seq2)  # 1024-dim
-readthrough_embedding = (embedding1 + embedding2) / 2  # 1024-dim
+# Concatenate into single fusion protein sequence
+fusion_sequence = seq1 + seq2
+
+# Embed the fusion as one protein
+readthrough_embedding = embed_protein(fusion_sequence)  # 512-dim
 ```
 
-**Why mean pooling:**
-- Preserves dimensionality (all genes have 1024-dim embeddings)
-- Biologically reasonable (fusion protein combines functions)
-- Simple and interpretable
-- Compatible with downstream models (no special handling needed)
+**Why concatenation:**
+- **Biologically accurate:** Readthrough transcripts produce continuous polypeptide chains
+- Preserves dimensionality (all genes have 512-dim embeddings)
+- Captures interactions between component proteins
+- No information loss from averaging
 
-**Alternatives considered:**
-- Max pooling: Too aggressive, loses complementary information
-- Concatenation: Creates 2048-dim vectors, breaks compatibility
-- Weighted average: Adds complexity, marginal benefit
+**Alternative (no longer used): Mean pooling**
+```python
+# Old approach: embed separately then average
+embedding1 = embed_protein(seq1)  # 512-dim
+embedding2 = embed_protein(seq2)  # 512-dim
+readthrough_embedding = (embedding1 + embedding2) / 2  # 512-dim
+```
+- This was simpler but loses biological accuracy
+- Concatenation better reflects actual protein structure
 
 ## Technical Specifications
 
@@ -111,29 +164,36 @@ protein-bert>=1.0.0
 
 **Important:** Python 3.12 is not supported due to tensorflow-addons. The project uses Python 3.9-3.11.
 
-### Model Loading
+### Model Loading (CORRECTED)
 ```python
+import tensorflow as tf
 from proteinbert import load_pretrained_model
-from proteinbert.conv_and_global_attention_model import (
-    get_model_with_hidden_layers_as_outputs
-)
 
 # Load pretrained model (downloads ~500 MB on first run)
 pretrained_model_generator, input_encoder = load_pretrained_model()
-model = get_model_with_hidden_layers_as_outputs(
-    pretrained_model_generator.create_model(1024)
+
+# Create base model
+base_model = pretrained_model_generator.create_model(seq_len=2048)
+
+# Extract 512-dim global representation from internal layer
+final_global_layer = base_model.get_layer('global-merge2-norm-block6')
+
+# Create embedding model
+embedding_model = tf.keras.Model(
+    inputs=base_model.inputs,
+    outputs=final_global_layer.output
 )
 ```
 
 ### Batch Processing
 ```python
 # Encode sequences
-encoded_x = input_encoder.encode_X(sequences, seq_len=1024)
+encoded_x = input_encoder.encode_X(sequences, seq_len=2048)
 
-# Get embeddings
-local_reps, global_reps = model.predict(encoded_x, batch_size=32)
+# Get 512-dim global embeddings
+global_embeddings = embedding_model.predict(encoded_x, batch_size=32)
 
-# global_reps shape: (n_sequences, 1024)
+# global_embeddings shape: (n_sequences, 512)
 ```
 
 ## Output
@@ -141,27 +201,27 @@ local_reps, global_reps = model.predict(encoded_x, batch_size=32)
 ### File: `data/embeddings/gene_to_embedding.pkl`
 ```python
 {
-    'TP53': array([0.12, -0.34, ..., 0.56]),      # 1024 floats
-    'BRCA1': array([0.45, -0.12, ..., 0.89]),    # 1024 floats
-    'PDCD6-AHRR': array([0.23, 0.15, ..., 0.34]), # 1024 floats (mean of components)
+    'TP53': array([0.12, -0.34, ..., 0.56]),      # 512 floats
+    'BRCA1': array([0.45, -0.12, ..., 0.89]),    # 512 floats
+    'PDCD6-AHRR': array([0.23, 0.15, ..., 0.34]), # 512 floats (concatenated sequence)
     # ... 19,294 total genes
 }
 ```
 
 ### Statistics
-- **File size:** ~79 MB (19,294 × 1024 × 4 bytes)
+- **File size:** ~40 MB (19,294 × 512 × 4 bytes) - REDUCED from 660 MB!
 - **Coverage:** 100% of mapped genes
-- **Dimension:** All embeddings are 1024-dim
+- **Dimension:** All embeddings are 512-dim (CORRECTED from 8943 or 15599)
 - **Quality:** No NaN or Inf values, all validated
 
 ## Validation
 
 Post-generation checks performed:
 1. **Coverage:** All 19,294 genes have embeddings
-2. **Dimensionality:** All vectors are exactly 1024-dim
+2. **Dimensionality:** All vectors are exactly 512-dim
 3. **Validity:** No NaN or Inf values
 4. **Magnitude:** Reasonable embedding norms (mean ± std logged)
-5. **Readthrough:** All 100 fusion genes handled correctly
+5. **Readthrough:** All 100 fusion genes handled correctly (via concatenation)
 
 ## Usage Example
 
@@ -173,7 +233,7 @@ with open('data/embeddings/gene_to_embedding.pkl', 'rb') as f:
     gene_to_embedding = pickle.load(f)
 
 # Access embedding
-tp53_embedding = gene_to_embedding['TP53']  # shape: (1024,)
+tp53_embedding = gene_to_embedding['TP53']  # shape: (512,)
 ```
 
 ### Create Cell-Level Embeddings
@@ -189,7 +249,7 @@ def create_cell_embeddings(adata, gene_to_embedding):
         gene_to_embedding: Dict mapping gene symbols to embeddings
 
     Returns:
-        cell_embeddings: Array of shape (n_cells, 1024)
+        cell_embeddings: Array of shape (n_cells, 512)
     """
     # Filter to genes with embeddings
     common_genes = [g for g in adata.var_names if g in gene_to_embedding]
@@ -203,10 +263,10 @@ def create_cell_embeddings(adata, gene_to_embedding):
     # Normalize per cell
     expression_norm = expression / (expression.sum(axis=1, keepdims=True) + 1e-10)
 
-    # Get protein embeddings: (n_genes, 1024)
+    # Get protein embeddings: (n_genes, 512)
     protein_embeddings = np.array([gene_to_embedding[g] for g in common_genes])
 
-    # Weighted sum: (n_cells, 1024)
+    # Weighted sum: (n_cells, 512)
     cell_embeddings = expression_norm @ protein_embeddings
 
     return cell_embeddings
@@ -234,9 +294,12 @@ def create_cell_embeddings(adata, gene_to_embedding):
 - **Input:** Amino acid sequence (variable length)
 - **Tokenization:** Each amino acid → token + special tokens (START, END, PAD)
 - **Encoder:** 6 transformer-like blocks with global attention
-- **Output:**
-  - Local: (seq_len, 1024) per-residue embeddings
-  - Global: (1024,) whole-protein embedding
+- **Internal Representations:**
+  - Local: (seq_len, 128) per-residue embeddings
+  - **Global: (512,) whole-protein embedding** ← This is what we extract
+- **Output Heads (task-specific, NOT embeddings):**
+  - Sequence output: (seq_len, 26) per-amino-acid predictions
+  - Annotation output: (8943,) GO term predictions
 
 ### Global Attention Mechanism
 Standard self-attention requires O(n²) operations for sequence length n, limiting maximum length. ProteinBERT uses a global-attention architecture:

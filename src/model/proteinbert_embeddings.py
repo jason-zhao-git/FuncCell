@@ -4,14 +4,12 @@ import logging
 import pickle
 import numpy as np
 import urllib.request
+import tensorflow as tf
 from pathlib import Path
 from typing import Dict, Union, Tuple
 from tqdm import tqdm
 
 from proteinbert import load_pretrained_model, load_pretrained_model_from_dump
-from proteinbert.conv_and_global_attention_model import (
-    get_model_with_hidden_layers_as_outputs
-)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,7 @@ ZENODO_URL = "https://zenodo.org/records/10371965/files/full_go_epoch_92400_samp
 class ProteinBERTEmbedder:
     """Generate and cache ProteinBERT embeddings."""
 
-    def __init__(self, seq_len: int = 1024, device: str = 'gpu'):
+    def __init__(self, seq_len: int = 2048, device: str = 'gpu'):
         """
         Initialize ProteinBERT model.
 
@@ -68,14 +66,24 @@ class ProteinBERTEmbedder:
             local_model_dump_file_name=MODEL_PATH.name,
             download_model_dump_if_not_exists=False  # Don't try to download, we already have it
         )
-        self.model = get_model_with_hidden_layers_as_outputs(
-            self.pretrained_model_generator.create_model(seq_len)
+
+        # Create base model
+        base_model = self.pretrained_model_generator.create_model(seq_len)
+
+        # Extract the 512-dim global representation from the final global layer
+        # This is the proper protein embedding, not the GO predictions
+        final_global_layer = base_model.get_layer('global-merge2-norm-block6')
+
+        # Create a new model that outputs only the 512-dim global representation
+        self.model = tf.keras.Model(
+            inputs=base_model.inputs,
+            outputs=final_global_layer.output
         )
 
         self.seq_len = seq_len
         self.device = device
 
-        logger.info(f"Model loaded successfully (seq_len={seq_len})")
+        logger.info(f"Model loaded successfully (seq_len={seq_len}, embedding_dim=512)")
 
 
     def embed_sequence(self, sequence: str) -> np.ndarray:
@@ -87,7 +95,7 @@ class ProteinBERTEmbedder:
             sequence: Amino acid sequence string
 
         Returns:
-            1024-dimensional embedding vector
+            512-dimensional global protein embedding
         """
         # Truncate sequence if too long (ProteinBERT handles this with random subsampling)
         if len(sequence) > self.seq_len - 10:  # Leave room for special tokens
@@ -97,12 +105,13 @@ class ProteinBERTEmbedder:
             sequence = sequence[start:start + (self.seq_len - 10)]
 
         encoded_x = self.input_encoder.encode_X([sequence], self.seq_len)
-        _, global_rep = self.model.predict(encoded_x, batch_size=1, verbose=0)
-        # global_rep shape: (1, 1024) -> extract to (1024,)
-        embedding = global_rep[0]
-        # Ensure it's 1D and has correct shape
-        if embedding.ndim > 1:
-            embedding = embedding.flatten()
+
+        # Model returns the 512-dim global representation
+        global_embedding = self.model.predict(encoded_x, batch_size=1, verbose=0)
+
+        # global_embedding shape: (1, 512) -> extract to (512,)
+        embedding = global_embedding[0]
+
         return embedding
 
 
@@ -115,7 +124,7 @@ class ProteinBERTEmbedder:
             batch_size: Batch size for processing
 
         Returns:
-            Array of shape (n_sequences, 1024)
+            Array of shape (n_sequences, 512)
         """
         all_embeddings = []
 
@@ -133,8 +142,8 @@ class ProteinBERTEmbedder:
                     truncated_batch.append(seq)
 
             encoded_x = self.input_encoder.encode_X(truncated_batch, self.seq_len)
-            _, global_reps = self.model.predict(encoded_x, batch_size=len(batch), verbose=0)
-            all_embeddings.append(global_reps)
+            global_embeddings = self.model.predict(encoded_x, batch_size=len(batch), verbose=0)
+            all_embeddings.append(global_embeddings)
 
         return np.vstack(all_embeddings)
 
@@ -156,7 +165,7 @@ class ProteinBERTEmbedder:
                 - 'weighted': Embed separately then weighted average by length
 
         Returns:
-            Embedding vector (1024-dim)
+            Embedding vector (512-dim)
         """
         if strategy == 'concat':
             # Concatenate amino acid sequences into one fusion protein
@@ -287,9 +296,9 @@ def validate_embeddings(
 
     # Check 2: Dimensionality
     dims = [emb.shape[0] for emb in gene_to_embedding.values()]
-    assert all(d == 1024 for d in dims), \
-        f"Not all embeddings are 1024-dimensional: {set(dims)}"
-    logger.info(f"✓ All embeddings are 1024-dimensional")
+    assert all(d == 512 for d in dims), \
+        f"Not all embeddings are 512-dimensional: {set(dims)}"
+    logger.info(f"✓ All embeddings are 512-dimensional")
 
     # Check 3: No NaN or Inf
     for gene, emb in gene_to_embedding.items():

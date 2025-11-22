@@ -56,3 +56,4 @@ htmlcov/
 # UV
 .uv/
 uv.lock
+gene_to_embedding_8943dim_OLD.pkl
