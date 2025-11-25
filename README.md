@@ -23,22 +23,25 @@ This project addresses the challenge that raw gene expression counts lack direct
 ```
 funcCell/
 ├── src/
-│   ├── preprocess_data/        # Day 1: Data querying & gene mapping
+│   ├── preprocess_data/        # Data querying & gene mapping
 │   │   ├── config.py           # Configuration parameters
 │   │   ├── census_query.py     # CELLxGENE Census data fetching
 │   │   ├── hvg_selection.py    # HVG selection on combined data
 │   │   └── gene_mapping.py     # Gene → protein sequence mapping
-│   └── model/                  # Day 2+: Model implementation
+│   └── model/                  # Embedding models
+│       └── cell_embeddings.py  # Cell-level embedding aggregation
 ├── scripts/
-│   └── run_data_pipeline.py    # Main pipeline orchestrator
-├── utils/
-│   ├── logging_utils.py        # Logging utilities
-│   └── file_utils.py           # File I/O helpers
+│   ├── run_data_pipeline.py    # Data preprocessing pipeline
+│   └── create_cell_embeddings.py  # Cell embedding generation
+├── notebooks/
+│   └── test_cell_embeddings.ipynb  # Interactive analysis notebook
 ├── data/                       # Generated data (gitignored)
 │   ├── raw/                    # Raw queried data
-│   ├── processed/              # Filtered & HVG-selected data
+│   ├── processed/              # Filtered data
 │   ├── sequences/              # Gene-to-protein mappings
-│   └── reports/                # QC reports & statistics
+│   ├── embeddings/             # Gene embeddings (512-dim)
+│   ├── cell_embeddings/        # Cell embeddings
+│   └── analysis/               # Cancer direction analysis
 ├── reference/                  # Project documentation
 └── pyproject.toml              # Project dependencies
 ```
@@ -151,13 +154,24 @@ gene_to_sequence, stats = map_genes_to_proteins(hvg_list)
 - ✅ Comprehensive logging and error handling
 - ✅ Detailed statistics and QC reports
 
-### Model Implementation (Day 2+)
+### Gene Embeddings (Day 2)
 
-- [ ] ProteinBERT embedding generation
-- [ ] Attention-based pooling for cell-level aggregation
-- [ ] Triplet loss training
-- [ ] Cancer vs. healthy classification
-- [ ] Evaluation and visualization
+- ✅ ProteinBERT embedding generation (512-dim per gene)
+- ✅ 19,294 protein-coding genes embedded
+
+### Cell Embeddings (Day 3)
+
+- ✅ Expression-weighted aggregation of gene embeddings
+- ✅ Cell embedding = Σ (normalized_expression × gene_embedding)
+- ✅ CELLxGENE Census integration for breast tissue data
+- ✅ Cancer direction vector analysis in 512-dim space
+- ✅ 99% classification accuracy (Logistic Regression, 5-fold CV)
+
+### Remaining Tasks
+
+- [ ] Triplet loss training for improved separation
+- [ ] Extended evaluation across multiple cancer types
+- [ ] Visualization dashboard
 
 ## Technical Approach
 
@@ -180,11 +194,12 @@ gene_to_sequence, stats = map_genes_to_proteins(hvg_list)
    - Set `skip_hvg_selection: False` in config to enable
 5. Final output: ~13k-16k genes with protein sequences
 
-### Protein Function Integration
+### Cell Embedding Method
 
-1. **Abundance Encoding:** Multiply protein embeddings by normalized transcript counts
-2. **Cell-Level Aggregation:** Attention-based pooling for weighted average
-3. **Training:** Triplet loss to separate cancer/healthy embeddings
+1. **Gene Embeddings:** ProteinBERT generates 512-dim embeddings for each gene's protein sequence
+2. **Expression Weighting:** Normalize expression per cell (weights sum to 1)
+3. **Aggregation:** Cell embedding = Σ (normalized_expression[gene] × gene_embedding[gene])
+4. **Analysis:** Cancer direction vector computed as (cancer_centroid - healthy_centroid) in 512-dim space
 
 ## Configuration
 
