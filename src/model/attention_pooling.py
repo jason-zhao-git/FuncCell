@@ -25,15 +25,18 @@ class AttentionPooling(nn.Module):
         hidden_dim: Hidden dimension of attention network (default: 128)
     """
 
-    def __init__(self, embed_dim: int = 512, hidden_dim: int = 128):
+    def __init__(self, embed_dim: int = 512, hidden_dim: int = 256):
         super().__init__()
         # Attention network: sees gene embedding (512) + expression (1) = 513
+        # 3-layer for more capacity with larger datasets
         self.attention = nn.Sequential(
             nn.Linear(embed_dim + 1, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1)
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
         )
-        # Classifier head
+        # Classifier head - simple, just maps cell embedding to prediction
         self.classifier = nn.Sequential(
             nn.Linear(embed_dim, 64),
             nn.ReLU(),
