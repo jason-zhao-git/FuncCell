@@ -75,6 +75,10 @@ class CellDataset(Dataset):
 
     Loads expression data from AnnData objects and pairs with gene embeddings.
 
+    NOTE: Gene embeddings are NOT returned in __getitem__ to avoid copying 39MB
+    per sample. Instead, access them via get_gene_embeddings() and expand to
+    batch size in the training loop.
+
     Args:
         adata_list: List of AnnData objects to concatenate
         labels_list: List of label arrays corresponding to each AnnData
@@ -91,12 +95,29 @@ class CellDataset(Dataset):
         print(f"Using {len(self.gene_list)} genes with embeddings")
 
         # Pre-compute gene embeddings matrix (same for all cells)
-        self.gene_embeddings = np.stack(
+        # Store as tensor ONCE - don't copy in __getitem__
+        gene_embeddings_np = np.stack(
             [gene_to_embedding[g] for g in self.gene_list]
         ).astype(np.float32)
+        self._gene_embeddings_tensor = torch.tensor(gene_embeddings_np, dtype=torch.float32)
+        # Keep numpy version for baseline computation
+        self._gene_embeddings_np = gene_embeddings_np
 
         # Filter adata to common genes
         self.adata = self.adata[:, self.gene_list]
+
+    def get_gene_embeddings(self, device=None):
+        """Get gene embeddings tensor, optionally moved to device.
+
+        Args:
+            device: torch device (cpu/cuda). If None, returns CPU tensor.
+
+        Returns:
+            Tensor of shape (n_genes, embed_dim)
+        """
+        if device is not None:
+            return self._gene_embeddings_tensor.to(device)
+        return self._gene_embeddings_tensor
 
     def __len__(self):
         return len(self.labels)
@@ -112,8 +133,8 @@ class CellDataset(Dataset):
         expr_norm = expr / (expr.sum() + 1e-10)
 
         mask = expr > 0
+        # NOTE: embeddings not included - use get_gene_embeddings() instead
         return {
-            'embeddings': torch.tensor(self.gene_embeddings, dtype=torch.float32),
             'expression': torch.tensor(expr_norm, dtype=torch.float32),
             'mask': torch.tensor(mask, dtype=torch.bool),
             'label': torch.tensor(self.labels[idx], dtype=torch.float32)
@@ -135,10 +156,12 @@ def compute_baseline_embeddings(dataset):
     embeddings = []
     labels = []
 
+    # Get gene embeddings once (shared across all cells)
+    gene_emb = dataset._gene_embeddings_np
+
     for i in range(len(dataset)):
         item = dataset[i]
         expr = item['expression'].numpy()
-        gene_emb = item['embeddings'].numpy()
 
         # Weighted sum: expression-weighted average of gene embeddings
         cell_emb = expr @ gene_emb  # (n_genes,) @ (n_genes, 512) = (512,)
