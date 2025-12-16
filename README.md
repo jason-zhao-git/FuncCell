@@ -2,8 +2,6 @@
 
 Create cell embeddings by combining single-cell RNA-seq expression with protein function embeddings from ProteinBERT.
 
-**Project Members:** Andre Gala-Garza, Prema Immadisetty, Jason (Jingqiao) Zhao
-**Course:** BIOINF 593
 
 ## Overview
 
